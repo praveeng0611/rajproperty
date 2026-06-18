@@ -1,20 +1,52 @@
 import { redirect } from 'next/navigation';
+import { timingSafeEqual, createHash } from 'crypto';
 import { getAuthUser, createToken, setAuthCookie } from '../../../lib/auth';
 
 export const metadata = { title: 'Admin Login — Raj Property' };
 
+// Best-effort in-memory rate limiter (per warm server instance).
+// Not a substitute for a shared store, but blocks naive brute-force scripts.
+const loginAttempts = globalThis.__rpLoginAttempts || (globalThis.__rpLoginAttempts = new Map());
+const MAX_ATTEMPTS = 5;
+const WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+
+function safeCompare(a, b) {
+  const hashA = createHash('sha256').update(String(a)).digest();
+  const hashB = createHash('sha256').update(String(b)).digest();
+  return timingSafeEqual(hashA, hashB);
+}
+
 async function loginAction(formData) {
   'use server';
-  const username = formData.get('username')?.trim();
-  const password = formData.get('password');
+  const username = formData.get('username')?.trim() || '';
+  const password = formData.get('password') || '';
 
-  const validUser = process.env.ADMIN_USERNAME || 'admin';
-  const validPass = process.env.ADMIN_PASSWORD || 'rajproperty123';
+  const validUser = process.env.ADMIN_USERNAME;
+  const validPass = process.env.ADMIN_PASSWORD;
 
-  if (username === validUser && password === validPass) {
+  if (!validUser || !validPass) {
+    // Fail closed: never fall back to a guessable default credential.
+    redirect('/admin/login?error=1');
+  }
+
+  const key = username || 'unknown';
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (entry && now - entry.first < WINDOW_MS && entry.count >= MAX_ATTEMPTS) {
+    redirect('/admin/login?error=1');
+  }
+
+  if (safeCompare(username, validUser) && safeCompare(password, validPass)) {
+    loginAttempts.delete(key);
     const token = await createToken();
     setAuthCookie(token);
     redirect('/admin/dashboard');
+  }
+
+  if (!entry || now - entry.first > WINDOW_MS) {
+    loginAttempts.set(key, { count: 1, first: now });
+  } else {
+    entry.count += 1;
   }
 
   redirect('/admin/login?error=1');

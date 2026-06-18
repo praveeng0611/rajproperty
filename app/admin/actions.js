@@ -3,7 +3,18 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '../../lib/supabase';
-import { clearAuthCookie } from '../../lib/auth';
+import { clearAuthCookie, getAuthUser } from '../../lib/auth';
+
+// Defense-in-depth: middleware already protects /admin/* routes, but Server
+// Actions are invoked directly via POST, so each mutating action re-checks
+// auth itself rather than relying solely on the route matcher.
+async function requireAdmin() {
+  const user = await getAuthUser();
+  if (!user) {
+    redirect('/admin/login');
+  }
+  return user;
+}
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
 export async function logoutAction() {
@@ -13,6 +24,7 @@ export async function logoutAction() {
 
 // ─── Create property ──────────────────────────────────────────────────────────
 export async function createPropertyAction(formData) {
+  await requireAdmin();
   const supabase = createAdminClient();
 
   const features = (formData.get('features') || '')
@@ -54,6 +66,7 @@ export async function createPropertyAction(formData) {
 
 // ─── Update property ──────────────────────────────────────────────────────────
 export async function updatePropertyAction(id, formData) {
+  await requireAdmin();
   const supabase = createAdminClient();
 
   const features = (formData.get('features') || '')
@@ -96,6 +109,7 @@ export async function updatePropertyAction(id, formData) {
 
 // ─── Delete property ──────────────────────────────────────────────────────────
 export async function deletePropertyAction(id) {
+  await requireAdmin();
   const supabase = createAdminClient();
   const { error } = await supabase.from('properties').delete().eq('id', id);
   if (error) throw new Error(error.message);
@@ -106,6 +120,7 @@ export async function deletePropertyAction(id) {
 
 // ─── Toggle status ────────────────────────────────────────────────────────────
 export async function toggleStatusAction(id, currentStatus) {
+  await requireAdmin();
   const supabase = createAdminClient();
   const newStatus = currentStatus === 'available' ? 'sold' : 'available';
   const { error } = await supabase.from('properties').update({ status: newStatus }).eq('id', id);
@@ -117,6 +132,7 @@ export async function toggleStatusAction(id, currentStatus) {
 
 // ─── Toggle featured ─────────────────────────────────────────────────────────
 export async function toggleFeaturedAction(id, currentFeatured) {
+  await requireAdmin();
   const supabase = createAdminClient();
   const { error } = await supabase.from('properties').update({ featured: !currentFeatured }).eq('id', id);
   if (error) throw new Error(error.message);
